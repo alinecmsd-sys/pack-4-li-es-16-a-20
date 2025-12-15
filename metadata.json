@@ -1,0 +1,7 @@
+{
+  "name": "English Master Pack 4",
+  "description": "Interactive English learning application for Lessons 16-20 with audio, vocabulary, and exercises.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
