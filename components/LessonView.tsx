@@ -28,7 +28,10 @@ const LessonView: React.FC<LessonViewProps> = ({ lesson }) => {
               key={idx} 
               className="flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-indigo-50 transition-colors border border-slate-100"
             >
-              <span className="font-medium text-slate-700">{item.word}</span>
+              <div className="flex flex-col">
+                <span className="font-medium text-slate-800">{item.word}</span>
+                <span className="text-sm text-slate-500">{item.translation}</span>
+              </div>
               <AudioButton text={item.word} size="sm" />
             </div>
           ))}
@@ -47,9 +50,14 @@ const LessonView: React.FC<LessonViewProps> = ({ lesson }) => {
               key={idx}
               className="group flex items-center justify-between p-4 rounded-xl bg-slate-50 hover:bg-white hover:shadow-md transition-all border border-slate-100"
             >
-              <span className="text-lg text-slate-700 font-medium group-hover:text-slate-900 transition-colors">
-                {phrase.text}
-              </span>
+              <div className="flex flex-col">
+                <span className="text-lg text-slate-700 font-medium group-hover:text-slate-900 transition-colors">
+                  {phrase.text}
+                </span>
+                <span className="text-sm text-slate-500 mt-1">
+                  {phrase.translation}
+                </span>
+              </div>
               <AudioButton text={phrase.text} />
             </div>
           ))}
