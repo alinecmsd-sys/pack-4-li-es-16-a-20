@@ -72,14 +72,14 @@ const ExerciseView: React.FC = () => {
         <div className="w-full bg-slate-200 rounded-full h-2 mt-4 overflow-hidden">
           <div 
             className="bg-indigo-600 h-2 rounded-full transition-all duration-300"
-            style={{ width: `${((currentIndex + 1) / filteredExercises.length) * 100}%` }}
+            style={{ width: filteredExercises.length ? `${((currentIndex + 1) / filteredExercises.length) * 100}%` : '0%' }}
           ></div>
         </div>
       </header>
 
       {/* Exercise Content */}
       <div className="bg-white rounded-2xl p-6 md:p-8 shadow-md border border-slate-100 min-h-[400px] flex flex-col justify-center">
-        {currentExercise ? (
+        {filteredExercises.length > 0 ? (
           activeTab === 'order' ? (
             <OrderExercise 
               key={currentExercise.id} 
@@ -94,8 +94,8 @@ const ExerciseView: React.FC = () => {
             />
           )
         ) : (
-          <div className="text-center text-slate-500">
-            No exercises found for this category.
+          <div className="text-center text-slate-500 py-10">
+            <p className="text-lg">No exercises available for this section.</p>
           </div>
         )}
       </div>
@@ -111,7 +111,7 @@ const ExerciseView: React.FC = () => {
         </button>
         <button
           onClick={handleNext}
-          disabled={currentIndex === filteredExercises.length - 1}
+          disabled={currentIndex >= filteredExercises.length - 1}
           className="px-6 py-2 rounded-xl text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium shadow-sm transition-colors"
         >
           Next
@@ -122,6 +122,7 @@ const ExerciseView: React.FC = () => {
 };
 
 // --- Order Exercise Component ---
+// Pure logic, safe for server rendering.
 
 const OrderExercise: React.FC<{ exercise: Exercise; onSuccess: () => void }> = ({ exercise, onSuccess }) => {
   const [userOrder, setUserOrder] = useState<string[]>([]);
@@ -155,12 +156,10 @@ const OrderExercise: React.FC<{ exercise: Exercise; onSuccess: () => void }> = (
 
   const checkAnswer = () => {
     const userAnswer = userOrder.join(' ');
-    // Validation: remove punctuation and case-insensitive check
-    const cleanQuestion = exercise.question.replace(/[.,?!]/g, '').trim().toLowerCase();
-    const cleanUser = userAnswer.replace(/[.,?!]/g, '').trim().toLowerCase();
+    // Robust checking: remove all punctuation, normalize spaces, lowercase
+    const cleanQuestion = exercise.question.replace(/[.,?!;:]/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const cleanUser = userAnswer.replace(/[.,?!;:]/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
     
-    // Strict punctuation check fallback?
-    // Let's stick to content matching.
     if (cleanQuestion === cleanUser) {
         setStatus('correct');
         onSuccess();
@@ -253,15 +252,26 @@ const OrderExercise: React.FC<{ exercise: Exercise; onSuccess: () => void }> = (
 };
 
 // --- Speaking Exercise Component ---
+// STRICT CLIENT SIDE ONLY.
 
 const SpeakingExercise: React.FC<{ exercise: Exercise; onSuccess: () => void }> = ({ exercise, onSuccess }) => {
+  const [isClient, setIsClient] = useState(false);
+  const [isSupported, setIsSupported] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [status, setStatus] = useState<'idle' | 'listening' | 'processing' | 'correct' | 'incorrect'>('idle');
-  const [browserSupport, setBrowserSupport] = useState(true);
-
-  // Use refs for recognition instance to avoid re-creation
   const recognitionRef = useRef<any>(null);
+
+  // 1. SSR Safety: Only run logic after mount
+  useEffect(() => {
+    setIsClient(true);
+    if (typeof window !== 'undefined') {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        setIsSupported(true);
+      }
+    }
+  }, []);
 
   // Reset state on exercise change
   useEffect(() => {
@@ -270,10 +280,45 @@ const SpeakingExercise: React.FC<{ exercise: Exercise; onSuccess: () => void }> 
     setIsListening(false);
   }, [exercise]);
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
+  // If not client yet, render placeholder (avoids hydration mismatch)
+  if (!isClient) {
+    return (
+      <div className="flex flex-col items-center justify-center p-12 text-slate-400">
+        <p>Loading exercise...</p>
+      </div>
+    );
+  }
+
+  // If client but not supported
+  if (!isSupported) {
+    return (
+      <div className="flex flex-col items-center justify-center p-8 bg-amber-50 rounded-xl text-amber-800 border border-amber-200 text-center space-y-4">
+        <span className="text-4xl">⚠️</span>
+        <h3 className="font-bold text-lg">Microphone Not Supported</h3>
+        <p>Your browser doesn't support speech recognition.</p>
+        <p className="text-sm">Please try using Google Chrome on Desktop or Android.</p>
+      </div>
+    );
+  }
+
+  const toggleListening = () => {
+    if (!isSupported) return;
+
+    // Safety check just in case
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    if (isListening) {
+      try {
+        recognitionRef.current?.stop();
+      } catch (e) {
+        console.warn("Error stopping recognition", e);
+      }
+    } else {
+      setTranscript('');
+      setStatus('listening');
+      
+      try {
         const recognition = new SpeechRecognition();
         recognition.continuous = false;
         recognition.lang = 'en-US';
@@ -286,50 +331,47 @@ const SpeakingExercise: React.FC<{ exercise: Exercise; onSuccess: () => void }> 
         };
 
         recognition.onresult = (event: any) => {
-          const text = event.results[0][0].transcript;
-          setTranscript(text);
-          validateSpeech(text);
+          // Defensive check for results
+          if (event.results && event.results[0] && event.results[0][0]) {
+             const text = event.results[0][0].transcript;
+             setTranscript(text);
+             validateSpeech(text);
+          }
         };
 
         recognition.onerror = (event: any) => {
-          console.error('Speech recognition error', event.error);
+          console.warn('Speech recognition error', event.error);
           setIsListening(false);
-          // Only reset if we were actively listening, otherwise it might be a silent error
-          if (status === 'listening') {
+          if (status !== 'correct') {
              setStatus('idle');
           }
         };
 
         recognition.onend = () => {
           setIsListening(false);
+          // Don't reset if we just succeeded or if we are processing
           if (status === 'listening') { 
               setStatus('idle'); 
           }
         };
 
         recognitionRef.current = recognition;
-      } else {
-        setBrowserSupport(false);
+        recognition.start();
+      } catch (e) {
+        console.error("Error starting recognition", e);
+        setIsListening(false);
+        setStatus('idle');
       }
-    }
-  }, [exercise.id]);
-
-  const toggleListening = () => {
-    if (!browserSupport) return;
-    if (isListening) {
-      recognitionRef.current?.stop();
-    } else {
-      setTranscript('');
-      setStatus('listening');
-      recognitionRef.current?.start();
     }
   };
 
   const validateSpeech = (spokenText: string) => {
     setStatus('processing');
-    const cleanSpoken = spokenText.toLowerCase().replace(/[.,?!]/g, '').trim();
-    const cleanTarget = exercise.question.toLowerCase().replace(/[.,?!]/g, '').trim();
+    const cleanSpoken = spokenText.toLowerCase().replace(/[.,?!;:]/g, '').trim();
+    const cleanTarget = exercise.question.toLowerCase().replace(/[.,?!;:]/g, '').trim();
 
+    // Exact match or contains match for longer phrases can be lenient, 
+    // but for learning app exact (ignoring punctuation) is best.
     if (cleanSpoken === cleanTarget) {
       setStatus('correct');
       onSuccess();
@@ -337,17 +379,6 @@ const SpeakingExercise: React.FC<{ exercise: Exercise; onSuccess: () => void }> 
       setStatus('incorrect');
     }
   };
-
-  if (!browserSupport) {
-      return (
-          <div className="flex flex-col items-center justify-center p-8 bg-amber-50 rounded-xl text-amber-800 border border-amber-200 text-center space-y-4">
-              <span className="text-4xl">⚠️</span>
-              <h3 className="font-bold text-lg">Microphone Not Supported</h3>
-              <p>Your browser doesn't support speech recognition.</p>
-              <p className="text-sm">Please try using Google Chrome, Edge, or Safari.</p>
-          </div>
-      )
-  }
 
   return (
     <div className="space-y-8 flex flex-col items-center animate-fade-in">
